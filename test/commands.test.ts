@@ -415,3 +415,45 @@ describe("every verb you can type reaches a real handler", () => {
     }
   })
 })
+
+describe("the slash name has exactly one owner", () => {
+  // The failure: every command declared `slash: { name: "ock" }`, so the host
+  // received twenty-eight competing entries for one name. Typing it still
+  // worked because one of them won, and the autocomplete said "no matching
+  // commands" — which is the only place anybody discovers the command exists.
+  //
+  // The test that missed it counted the literal string `slash: { name:` in the
+  // source: one line, therefore one command, green. It was asserting about the
+  // text rather than about what COMMANDS.map produces.
+  const layer = tuiSource.slice(tuiSource.indexOf("ctx.keymap.layer"), tuiSource.indexOf("ctx.keymap.layer") + 1200)
+
+  it("attaches the slash name conditionally, not to every command", () => {
+    assert.doesNotMatch(
+      layer,
+      /palette: true as const,\s*slash:/,
+      "an unconditional `slash` next to `palette` gives every command the same name",
+    )
+    assert.match(layer, /spec\.name === "kanban\.open"/, "one named command must own the slash name")
+  })
+
+  it("emits exactly one slash claim from the whole layer", () => {
+    // Counted the way the host sees it: the layer builds one command per
+    // COMMANDS entry, so what matters is how many of them carry a `slash` at
+    // runtime. One conditional in the map body means one claimant, however many
+    // commands the manifest holds.
+    const claims = [...layer.matchAll(/slash:\s*\{/g)]
+    assert.equal(claims.length, 1, "exactly one command may carry a slash name")
+    const conditions = [...layer.matchAll(/spec\.name === "([\w.]+)"/g)].map((m) => m[1])
+    assert.deepEqual(conditions, ["kanban.open"], "and it is one named command, not a property of the map")
+  })
+
+  it("still keeps every command in the palette", () => {
+    // Dropping the slash claim must not drop the command: the palette is where
+    // a person browses, and it is how they find out what exists.
+    for (const command of COMMANDS) {
+      assert.ok(command.title.length > 0, `${command.name} has no palette title`)
+      assert.ok(command.hint.length > 10, `${command.name} has no palette hint`)
+    }
+    assert.ok(COMMANDS.length > 20, "the manifest should still be a browsable list")
+  })
+})

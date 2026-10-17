@@ -448,6 +448,23 @@ export default Plugin.define({
      * unreadable, and this sits directly above a prompt someone is about to
      * type into. The bar carries the colour; the text stays legible.
      */
+    /**
+     * Exactly one command owns the slash name.
+     *
+     * Every command used to declare `slash: { name: "ock" }`, so the host was
+     * handed twenty-eight competing entries for one name. Typing `/ock clear`
+     * still worked — one of the twenty-eight won — but the autocomplete said
+     * "no matching commands", which is the only place anyone discovers the
+     * command exists.
+     *
+     * And the test that should have caught it counted the *string* `slash: {
+     * name:` in the source: one line, so one command, green. It said nothing
+     * about what the map produces at runtime, which was twenty-eight. A source
+     * assertion about a runtime count is a test of the wrong thing.
+     *
+     * So `kanban.open` owns `/ock` and dispatches on the verb; the rest stay in
+     * the palette, which is where a named command belongs.
+     */
     ctx.keymap.layer(() => ({
       commands: COMMANDS.map((spec) => ({
         id: spec.name,
@@ -455,7 +472,10 @@ export default Plugin.define({
         description: spec.hint,
         group: spec.category,
         palette: true as const,
-        slash: { name: DEFAULT_ROOT, aliases: ROOT_ALIASES, arguments: true as const },
+        // One owner, not twenty-eight claimants of the same name.
+        ...(spec.name === "kanban.open"
+          ? { slash: { name: DEFAULT_ROOT, aliases: ROOT_ALIASES, arguments: true as const } }
+          : {}),
         run: (input) => {
           void (async () => {
             const id = sessionIDOf(ui.panel.current()?.sessionID ?? currentSession())
