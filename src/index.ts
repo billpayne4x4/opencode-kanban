@@ -423,13 +423,22 @@ export default Plugin.define({
           )
           if (!decision.fire || !decision.item) continue
           try {
+            // The board `decideNudge` already read, not three more reads.
+            //
+            // Re-reading here is how a nudge goes out naming work that was
+            // removed a moment ago: the decision is computed, then the board is
+            // re-read for the budget and the count, and anything that changed in
+            // between is invisible to the text but visible to the agent. It also
+            // cost two extra file reads on the one code path that has to be
+            // reliable when things are going wrong.
+            const current = await io.read(sessionID).catch(() => undefined)
             await ctx.session.synthetic({
               sessionID,
               text: nudgeText(
                 decision.item,
                 decision.nudge.attempts,
-                maxAttemptsFor(await io.read(sessionID).catch(() => undefined), options.maxAttempts),
-                openWork(await io.read(sessionID).catch(() => undefined)),
+                maxAttemptsFor(current, options.maxAttempts),
+                openWork(current),
               ),
               description: `kanban nudge ${decision.nudge.attempts}/${options.maxAttempts}`,
               resume: true,
