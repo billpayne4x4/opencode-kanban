@@ -365,3 +365,36 @@ describe("the in-window notice", () => {
     assert.match(slot, /width="100%"/, "and fill what it measured")
   })
 })
+
+describe("every verb you can type reaches a real handler", () => {
+  // The gap this closed: `commands.test.ts` checked that every command HAS a
+  // handler, but nothing checked that every VERB routes to one. So `/ock
+  // control` — documented in VERBS, in the README and in the catalogue —
+  // answered "unknown verb", and `/ock log` dispatched to a handler nobody
+  // wrote. Both were invisible to a test that only walked one direction.
+  // Bounded to the object itself. An unbounded slice runs into unrelated code
+  // and invents verbs that do not exist, which is its own kind of false alarm.
+  const verbStart = tuiSource.indexOf("const VERB_TARGET")
+  const verbBlock = tuiSource.slice(verbStart, tuiSource.indexOf("\n}\n", verbStart))
+  const verbs = [...verbBlock.matchAll(/(?:^|\n)\s*"?([\w-]+)"?:\s*"([\w-]+)"/g)].map((m) => ({ verb: m[1], target: m[2] }))
+  const handlerStart = tuiSource.indexOf("const handlers: Record<string,")
+  const handlerBlock = tuiSource.slice(handlerStart, tuiSource.indexOf("\n    }\n", handlerStart))
+  const handlers = new Set([...handlerBlock.matchAll(/^\s*"?([\w.-]+)"?:\s*(?:\(|async)/gm)].map((m) => m[1]))
+
+  it("finds the verb table at all", () => {
+    assert.ok(verbs.length > 30, `expected the verb table, found ${verbs.length} entries`)
+    assert.ok(handlers.size > 15, `expected the handler table, found ${handlers.size}`)
+  })
+
+  it("routes every verb to a handler that exists", () => {
+    const dead = verbs.filter((entry) => !handlers.has(`kanban.${entry.target}`))
+    assert.deepEqual(dead.map((entry) => `/${entry.verb} -> kanban.${entry.target}`), [], "a verb nobody answers")
+  })
+
+  it("covers the verbs the docs promise", () => {
+    const routed = new Set(verbs.map((entry) => entry.verb))
+    for (const promised of ["add", "done", "rm", "clear", "control", "export", "import", "template", "notify", "help", "log"]) {
+      assert.ok(routed.has(promised), `/ock ${promised} is documented but not routable`)
+    }
+  })
+})

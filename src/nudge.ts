@@ -142,7 +142,7 @@ export function resume(nudge: NudgeState): NudgeState {
  */
 export function decideNudge(board: Board, options: NudgeOptions = {}): NudgeDecision {
   const nudge = board.nudge ?? freshNudge()
-  // The board's own setting wins over the configured default, so `/kanban-budget`
+  // The board's own setting wins over the configured default, so `/ock budget`
   // takes effect without a config edit. `options.maxAttempts` is the fallback.
   const maxAttempts = nudgeBudget(nudge, options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS)
   const now = options.now ?? Date.now()

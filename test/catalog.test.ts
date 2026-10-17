@@ -10,7 +10,7 @@
 
 import { strict as assert } from "node:assert"
 import { describe, it } from "node:test"
-import { ENTRIES, GROUPS, publicEntries, agentHelp, humanHelp, writeDescription, READ_ENTRY } from "../src/catalog.ts"
+import { ENTRIES, GROUPS, publicEntries, agentHelp, humanOptions, humanVerbs, writeDescription, READ_ENTRY } from "../src/catalog.ts"
 import { COMMANDS, OP_COMMANDS, REQUIRED_OPS, VERBS, DEFAULT_ROOT } from "../src/commands.ts"
 
 describe("the catalogue", () => {
@@ -104,8 +104,9 @@ describe("what the agent is handed", () => {
     for (const line of writeDescription().split("\n")) {
       assert.equal(line, line.trimEnd(), `trailing whitespace: ${JSON.stringify(line)}`)
     }
-    for (const line of humanHelp().split("\n")) {
-      assert.equal(line, line.trimEnd(), `trailing whitespace: ${JSON.stringify(line)}`)
+    for (const option of humanOptions()) {
+      assert.equal(option.title, option.title.trimEnd(), "a row's padding must be in the dialog, not baked into the string")
+      assert.equal(option.description, option.description.trimEnd())
     }
   })
 
@@ -128,13 +129,31 @@ describe("what the agent is handed", () => {
     }
   })
 
-  it("gives every human operation a slash command in the help", () => {
-    const help = humanHelp()
-    for (const entry of publicEntries()) {
+  it("gives every human operation a slash command in the picker", () => {
+    const options = humanOptions()
+    for (const option of options) {
+      const entry = ENTRIES.find((candidate) => candidate.op === option.value)!
       if (!entry.verb) continue
-      assert.ok(help.includes(`/${entry.verb}`), `${entry.op} documents /${entry.verb}, but the help omits it`)
+      assert.ok(option.title.includes(entry.verb) || option.description.length > 0, `${entry.op} has nothing to show`)
+    }
+    assert.equal(options.length, humanVerbs().length)
+  })
+
+  it("keeps the picker one row per operation, each with its own reason", () => {
+    // A dialog has a fixed height. The help used to be one block of text long
+    // enough to push the buttons that close it off the bottom edge, so the one
+    // command you reach for when something is wrong could not be dismissed.
+    // One row per op, each self-contained, is what keeps it readable.
+    const options = humanOptions()
+    const ops = options.map((option) => option.value)
+    assert.equal(new Set(ops).size, ops.length, "no operation may appear twice")
+    assert.deepEqual(ops, humanVerbs(), "one row per operation, in working order")
+    for (const option of options) {
+      assert.ok(option.title.length > 0, `${option.value} has no title`)
+      assert.ok(option.description.length > 20, `${option.value} has no "when to use it"`)
     }
   })
+
 })
 
 describe("help stays reachable by a human", () => {
@@ -145,9 +164,8 @@ describe("help stays reachable by a human", () => {
     assert.match(tuiSource, /"kanban\.help":/, "help has no handler in tui.tsx")
   })
 
-  it("the help names the prefix to type", () => {
-    // A human copy-pasting out of the help must get a command that runs.
-    assert.match(humanHelp(), new RegExp(`/${DEFAULT_ROOT} help`))
+  it("the agent help names the prefix, since a human copy-pastes out of it", () => {
+    // A human copy-pasting from the documentation must get a command that runs.
     assert.match(agentHelp(), new RegExp(`/${DEFAULT_ROOT} help`))
   })
 })

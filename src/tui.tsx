@@ -19,7 +19,7 @@ import { For, Show, createMemo, createSignal, onCleanup, onMount } from "solid-j
 import { Plugin } from "@opencode/plugin/tui"
 import { type Board, type Item } from "./types.ts"
 import { checkbox, itemLabel, panelRule, panelTitle, statusCells, EMPTY_BOARD } from "./format.ts"
-import { humanHelp } from "./catalog.ts"
+import { ENTRIES, humanOptions } from "./catalog.ts"
 import { childrenOf, containerDone, descendantProgress, nextItem, progress, treeRows } from "./board.ts"
 import { type Mutation, type Store, apply } from "./actions.ts"
 import { nudgeBudget, nudgeEnabled } from "./nudge.ts"
@@ -66,6 +66,7 @@ const VERB_TARGET: Record<string, string> = {
   subtasks: "subtasks",
   reparent: "reparent",
   clear: "clear",
+  control: "control",
   run: "run",
   pause: "pause",
   stop: "stop",
@@ -572,7 +573,7 @@ export default Plugin.define({
       const options = folders.map((folder) => ({ title: `${folder.id} · ${folder.title}`, value: folder.id }))
       if (allowTop) options.unshift({ title: "— top level —", value: "" })
       if (options.length === 0) {
-        await ui.dialog.alert({ title: "No folders yet", message: "Create one with /kanban-folder first." })
+        await ui.dialog.alert({ title: "No folders yet", message: `Create one with /${DEFAULT_ROOT} folder first.` })
         return undefined
       }
       const choice = await ui.dialog.select<string>({ title: "Folder", placeholder: "Which one?", options })
@@ -740,11 +741,34 @@ export default Plugin.define({
         }
         await mutate(sessionID, { op: "notify", mode })
       },
+      /**
+       * A list, not a wall of text.
+       *
+       * A dialog has a fixed height. Handing it the whole catalogue pushed the
+       * buttons that close it off the bottom edge, so the one command you reach
+       * for when something is wrong was the one you could not get rid of.
+       */
       "kanban.help": async (sessionID) => {
-        // A dialog, not a toast: this is reference material, and a toast that
-        // vanishes in four seconds is useless for anything with a table in it.
-        await ui.dialog.alert({ title: `Kanban — /${DEFAULT_ROOT} help`, message: humanHelp() })
+        const chosen = await ui.dialog.select<string>({
+          title: `Kanban — /${DEFAULT_ROOT} help`,
+          placeholder: "Every operation. Pick one to see when to use it",
+          options: humanOptions(),
+        })
         void refresh(sessionID)
+        if (!chosen) return
+        const entry = ENTRIES.find((candidate) => candidate.op === chosen)
+        if (!entry) return
+        await ui.dialog.alert({
+          title: `/${DEFAULT_ROOT} ${entry.verb ?? entry.op}`,
+          message: [
+            entry.purpose,
+            ...(entry.args.length
+              ? ["", ...entry.args.map((arg) => `  ${arg.required ? "" : "?"}${arg.name} (${arg.type}) — ${arg.meaning}`)]
+              : []),
+            ...(entry.example ? ["", entry.example] : []),
+            ...(entry.notes ?? []).map((note) => `  - ${note}`),
+          ].join("\n"),
+        })
       },
       // /add "do a thing"   /add k3 "do a thing"   /add   (dialog)
       "kanban.add": async (sessionID, input) => {
@@ -894,6 +918,15 @@ export default Plugin.define({
       "kanban.budget": (sessionID) => setBudget(sessionID),
       "kanban.debug-on": (sessionID) => mutate(sessionID, { op: "debug", enabled: true }, `Debug log: ${DEBUG_LOG}`),
       "kanban.debug-off": (sessionID) => mutate(sessionID, { op: "debug", enabled: false }, "Debug log off"),
+      // `/ock log` asked where the log is. The verb was documented and
+      // dispatched, and the handler it dispatched to did not exist — so it
+      // answered "unknown verb" on the one question a person debugging this
+      // plugin is most likely to ask.
+      "kanban.debug-log": (sessionID) => {
+        const state = board()?.sessionID === sessionID ? board() : undefined
+        const where = state?.debug ? `logging to ${DEBUG_LOG}` : `not logging. ${DEBUG_LOG} is where it goes`
+        toast("info", `Kanban: ${where}`)
+      },
       "kanban.control": (sessionID) => controlPanel(sessionID),
       "kanban.continue": (sessionID) => mutate(sessionID, { op: "resume" }, "Nudging resumed"),
       "kanban.stop": (sessionID) => mutate(sessionID, { op: "pause" }, "Nudging paused"),

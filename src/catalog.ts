@@ -564,47 +564,36 @@ export function agentHelp(): string {
 }
 
 /**
- * `/ock help` — the same catalogue, shaped for reading in a dialog.
+ * `/ock help` — the catalogue as a picker.
  *
- * Kept separate from `agentHelp` on purpose: a terminal dialog wants one screen
- * of scannable lines, and the agent wants the full reference. Same source, so
- * they cannot disagree about what exists.
+ * This was a `dialog.alert` with the whole thing rendered as one block of text,
+ * and that was wrong in a way only a human could have told me: a dialog is a
+ * fixed height, the text overflowed it, and the buttons that close it ended up
+ * somewhere below the bottom edge. A reference you cannot close with the mouse
+ * is not a reference, however good the text in it is.
+ *
+ * So it is a list, one row per operation, each carrying its own "use it when".
+ * The dialog scrolls because that is what a list dialog does, so the buttons
+ * stay put however long the catalogue gets, and the operation you are reading
+ * about is on screen rather than six lines away in a paragraph.
+ *
+ * Order is the working loop rather than alphabetical, because that is the order
+ * somebody actually wants: plan the work, work through it, prune it, back it up,
+ * then the controls.
  */
-export function humanHelp(): string {
-  const lines: string[] = [
-    `OpenCode Kanban — /${DEFAULT_ROOT}`,
-    "",
-    "The agent drives the board with kanban_read and kanban_write, and can",
-    "read the same catalogue with kanban_help. Everything below is reachable",
-    "from here too — the board is never something only the agent can operate.",
-    "",
-  ]
-  // Width from the longest row rather than a guess: one over-long entry used to
-  // push its summary out of alignment and make the whole block look broken.
-  const rows = GROUPS.flatMap((group) => group.entries.map((entry) => [entry, group] as const))
-  const label = (entry: CatalogEntry) => entry.op + optionalClause(entry)
-  const column = Math.max(...rows.map(([entry]) => label(entry).length)) + 2
+export type HelpOption = { title: string; description: string; value: string }
 
-  for (const group of GROUPS) {
-    lines.push(group.title.toUpperCase())
-    lines.push(group.blurb)
-    for (const entry of group.entries) {
-      const flags = [entry.destructive ? "destructive" : "", entry.verb ? `/${entry.verb}` : ""].filter(Boolean)
-      lines.push(`  ${label(entry).padEnd(column)}${entry.summary}${flags.length ? `  (${flags.join(", ")})` : ""}`)
-    }
-    lines.push("")
-  }
+export function humanOptions(): HelpOption[] {
+  return GROUPS.flatMap((group) =>
+    group.entries.map((entry) => ({
+      value: entry.op,
+      title: `${entry.op}${optionalClause(entry)}  ${entry.summary}`,
+      description: entry.purpose,
+    })),
+  )
+}
 
-  const shortcuts: [string, string][] = [
-    ["help", "this catalogue"],
-    ["<verb> …", "one command, many verbs — no other name is claimed"],
-    ['done k5', "mark done, and reset the try counter"],
-    ['add k3 "text"', "file a task under folder k3"],
-    ["control", "stop, resume, budget, debug"],
-    ["clear", "empty the board, after confirming"],
-  ]
-  const width = Math.max(...shortcuts.map(([verb]) => verb.length)) + 2
-  lines.push("SHORTCUTS")
-  for (const [verb, note] of shortcuts) lines.push(`  /${DEFAULT_ROOT} ${verb.padEnd(width)}${note}`)
-  return lines.join("\n")
+/** The verbs, for the panel and the tests: what `/ock <this>` does. */
+export function humanVerbs(): string[] {
+  return GROUPS.flatMap((group) => group.entries.map((entry) => entry.op))
 }
