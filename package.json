@@ -1,0 +1,61 @@
+{
+  "name": "opencode-kanban",
+  "version": "0.1.0",
+  "description": "A durable, agent-writable task board for OpenCode, with a nudge engine that restarts an idle agent and halts after 3 tries so a human halt is never mistaken for an agent halt.",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "kanban",
+    "task-board",
+    "todo"
+  ],
+  "files": [
+    "src",
+    "index.ts",
+    "tui.ts"
+  ],
+  "exports": {
+    ".": "./index.ts",
+    "./tui": "./tui.ts"
+  },
+  "scripts": {
+    "test": "node --test --experimental-strip-types \"test/*.test.ts\"",
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@opencode/plugin": ">=2.0.0",
+    "@opentui/core": ">=0.5.6",
+    "@opentui/solid": ">=0.5.6",
+    "solid-js": ">=1.9.0"
+  },
+  "engines": {
+    "opencode": ">=1.18.0",
+    "node": ">=22.18"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "^1.18.7",
+    "@opencode/plugin": "^2.0.32",
+    "@opentui/core": "^0.5.6",
+    "@opentui/solid": "^0.5.6",
+    "@types/node": "^24.19.2",
+    "solid-js": "1.9.12",
+    "typescript": "^5.9.3"
+  },
+  "peerDependenciesMeta": {
+    "@opencode/plugin": {
+      "optional": true
+    },
+    "@opentui/core": {
+      "optional": true
+    },
+    "@opentui/solid": {
+      "optional": true
+    },
+    "solid-js": {
+      "optional": true
+    }
+  }
+}
