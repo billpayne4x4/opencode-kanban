@@ -66,3 +66,36 @@ export function parseArgs(input: string | undefined): ParsedArgs {
   const rest = words.filter((word) => !isParentRef(word))
   return { ids, title: rest.length > 0 ? rest.join(" ") : undefined }
 }
+
+/**
+ * Split slash-command input into words, honouring quotes.
+ *
+ * A plain `split(/\s+/)` turns `/ock import ~/my tasks/tasks.md` into two words
+ * and silently imports the wrong one — or none, since the first half is not a
+ * file. Paths have spaces in them constantly, so the rule has to be quotes, and
+ * `parseArgs` gets it for free because it is now expressed in terms of this.
+ */
+export function splitArgs(input: string): string[] {
+  const words: string[] = []
+  let current = ""
+  let quote: '"' | "'" | undefined
+  for (const char of input) {
+    if (quote) {
+      if (char === quote) quote = undefined
+      else current += char
+      continue
+    }
+    if (char === '"' || char === "'") {
+      quote = char
+      continue
+    }
+    if (/\s/.test(char)) {
+      if (current) words.push(current)
+      current = ""
+      continue
+    }
+    current += char
+  }
+  if (current) words.push(current)
+  return words
+}

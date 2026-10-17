@@ -10,6 +10,23 @@ const verbs = COMMANDS.map((command) => command.name.replace(/^kanban\./, ""))
 const verbSet = new Set(verbs)
 const tuiSource = await readFile(new URL("../src/tui.tsx", import.meta.url), "utf8")
 
+/**
+ * The handler and verb tables, bounded by their own closing brace.
+ *
+ * These used to be sliced up to the next `ctx.keymap.layer`, which is a
+ * positional guess: rearranging the setup order emptied the slice and the tests
+ * quietly stopped seeing anything, rather than failing. Two tests went green
+ * against an empty string that way.
+ */
+function handlerTable() {
+  const from = tuiSource.indexOf("const handlers: Record<string,")
+  return tuiSource.slice(from, tuiSource.indexOf("\n    }\n", from))
+}
+function verbTable() {
+  const from = tuiSource.indexOf("const VERB_TARGET")
+  return tuiSource.slice(from, tuiSource.indexOf("\n}\n", from))
+}
+
 describe("the command manifest", () => {
   it("has no duplicate command or verb names", () => {
     const names = COMMANDS.map((command) => command.name)
@@ -75,7 +92,7 @@ describe("the human controls every state", () => {
   })
 
   it("every control has a handler in tui.tsx", () => {
-    const handlers = tuiSource.slice(tuiSource.indexOf("const handlers"), tuiSource.indexOf("ctx.keymap.layer"))
+    const handlers = handlerTable()
     for (const name of ["kanban.run", "kanban.pause", "kanban.nudge-on", "kanban.nudge-off", "kanban.budget"]) {
       assert.ok(handlers.includes(`"${name}"`), `${name} has no handler`)
     }
@@ -221,10 +238,10 @@ describe("the namespaced command", () => {
   })
 
   it("every verb maps to a handler in tui.tsx", () => {
-    const handlers = tuiSource.slice(tuiSource.indexOf("const handlers"), tuiSource.indexOf("ctx.keymap.layer"))
+    const handlers = handlerTable()
     // Every verb the manifest advertises must reach a real handler, allowing for
     // the short forms (`rm` -> `remove`).
-    const targets = tuiSource.slice(tuiSource.indexOf("const VERB_TARGET"), tuiSource.indexOf("const handlers"))
+    const targets = verbTable()
     for (const verb of Object.keys(VERBS)) {
       const target = /\b(?:rm|del|remove): "([a-z-]+)"/.exec(targets)?.[1]
       if (target) assert.ok(handlers.includes(`"kanban.${target}"`), `/${verb} -> kanban.${target} has no handler`)

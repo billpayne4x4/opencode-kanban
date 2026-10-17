@@ -82,7 +82,7 @@ export type Mutation =
    * Rebuild the board from a checklist file. `content` skips the filesystem
    * entirely, which is what the agent uses when it already has the text.
    */
-  | { op: "import"; path?: string; content?: string; merge?: boolean }
+  | { op: "import"; path?: string; content?: string; merge?: boolean; fromHuman?: boolean }
   /** Write the starter template to `.ai/tasks.template.md`. */
   | { op: "template"; path?: string }
   /**
@@ -274,7 +274,7 @@ export function parseMutation(input: unknown): Mutation {
       const content = asOptionalString(raw.content)
       if (!path && !content) throw new BoardError("import needs a `path`, or the file `content` itself")
       if (raw.merge !== undefined && typeof raw.merge !== "boolean") throw new BoardError("import `merge` must be true or false")
-      return { op: "import", path, content, merge: raw.merge }
+      return { op: "import", path, content, merge: raw.merge, fromHuman: raw.fromHuman === true }
     }
     case "notify":
       if (raw.mode !== "toast" && raw.mode !== "panel") throw new BoardError("notify `mode` must be \"toast\" or \"panel\"")
@@ -337,16 +337,45 @@ function requireFiles(io: Store, op: string): Files {
 }
 
 /**
- * Keep a path inside the project.
+ * A Windows path, on any platform.
  *
- * The agent picks these, and an agent can be talked into `../../.ssh/authorized_keys`
- * by anything it reads. A backup feature that can write outside the repo is not
- * a backup feature, so an absolute path or a `..` that escapes the root is
- * refused outright rather than normalised into somewhere unexpected.
+ * Backslashes are legal in a POSIX filename and a person typing one is almost
+ * always copying from a Windows machine or a document that used them. On Linux
+ * `path.isAbsolute("C:\\Users\\me\\tasks.md")` is false and `\` is an ordinary
+ * character, so the traversal check walks straight past it — the one case where
+ * not recognising the path is the security-relevant one. Detecting the shape
+ * lets it be refused rather than silently treated as a relative filename.
  */
-export function confinePath(relative: string): string {
-  if (path.isAbsolute(relative)) throw new BoardError(`path must be relative to the project root: ${relative}`)
-  const resolved = path.posix.normalize(relative.replace(/\\/g, "/"))
+export function looksAbsolute(value: string): boolean {
+  const v = value.replace(/\\/g, "/")
+  return path.isAbsolute(v) || path.posix.isAbsolute(v) || /^[A-Za-z]:\//.test(v) || v.startsWith("~")
+}
+
+/**
+ * Keep a path inside the project, unless a person named it.
+ *
+ * The agent picks most of these, and an agent can be talked into
+ * `../../.ssh/authorized_keys` by anything it reads. So a tool call is confined
+ * no matter what it asks for.
+ *
+ * A human typing a path is different: `/ock import ~/other-repo/tasks.md` is an
+ * explicit instruction about a specific file, and refusing it would make the
+ * command lie about what it can do. `fromHuman` is the difference, it is set in
+ * exactly one place — the slash handler — and it only ever widens *reading*.
+ * Writing outside the project stays refused for everyone, because that is the
+ * direction with consequences.
+ */
+export function confinePath(relative: string, options: { allowAbsolute?: boolean } = {}): string {
+  const value = relative.replace(/\\/g, "/")
+  if (options.allowAbsolute && (value.startsWith("~") || path.posix.isAbsolute(value) || /^[A-Za-z]:\//.test(value))) {
+    return value
+  }
+  if (looksAbsolute(relative)) {
+    throw new BoardError(
+      options.allowAbsolute ? `path leaves the project root: ${relative}` : `path must be relative to the project root: ${relative}`,
+    )
+  }
+  const resolved = path.posix.normalize(value)
   if (resolved === ".." || resolved.startsWith("../")) {
     throw new BoardError(`path leaves the project root: ${relative}`)
   }
@@ -359,8 +388,8 @@ async function writeFileIn(io: Store, relative: string, content: string): Promis
   return safe
 }
 
-async function readFileIn(io: Store, relative: string): Promise<string> {
-  const safe = confinePath(relative)
+async function readFileIn(io: Store, relative: string, fromHuman: boolean): Promise<string> {
+  const safe = confinePath(relative, { allowAbsolute: fromHuman })
   try {
     return await requireFiles(io, "reading a file").read(safe)
   } catch {
@@ -442,7 +471,7 @@ export async function apply(store: Store, sessionID: string, mutation: Mutation,
       // No path means the standard file. `/ock import` with no arguments is the
       // common case — restoring what `/ock export` wrote — and making someone
       // name a path they did not choose is a question with one answer.
-      const text = mutation.content ?? (await readFileIn(io, mutation.path ?? TASKS_PATH))
+      const text = mutation.content ?? (await readFileIn(io, mutation.path ?? TASKS_PATH, mutation.fromHuman === true))
       const roots = parseTasks(text)
       // Replace starts from an empty board. Building onto the existing one and
       // then calling it a replacement is how "replace" silently became "append",

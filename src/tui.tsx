@@ -114,7 +114,10 @@ export default Plugin.define({
     const io: Store = {
       read: (sessionID) => load(worktree, sessionID),
       write: (board) => save(worktree, board),
-      files: projectFiles(worktree),
+      // The human-facing side may read a file they name explicitly. The server's
+      // handle (index.ts) deliberately does not, so the agent's tool call stays
+      // confined to the project however it is argued.
+      files: projectFiles(worktree, { allowAbsoluteRead: true }),
     }
 
     const [board, setBoard] = createSignal<Board | undefined>()
@@ -445,7 +448,52 @@ export default Plugin.define({
      * unreadable, and this sits directly above a prompt someone is about to
      * type into. The bar carries the colour; the text stays legible.
      */
-    ui.slot({
+    ctx.keymap.layer(() => ({
+      commands: COMMANDS.map((spec) => ({
+        id: spec.name,
+        title: spec.title,
+        description: spec.hint,
+        group: spec.category,
+        palette: true as const,
+        slash: { name: DEFAULT_ROOT, aliases: ROOT_ALIASES, arguments: true as const },
+        run: (input) => {
+          void (async () => {
+            const id = sessionIDOf(ui.panel.current()?.sessionID ?? currentSession())
+            debug(
+              await io.read(id).catch(() => undefined),
+              "command",
+              `/${DEFAULT_ROOT}${input ? ` ${input}` : ""} -> ${spec.name}`,
+            )
+            await handlers[spec.name]?.(id, input)
+          })()
+        },
+      })),
+    }))
+
+    /**
+     * Claim a slot, and survive failing to.
+     *
+     * Setup is one long function, so anything that throws part-way through takes
+     * everything after it down with it. That is not hypothetical: the notice
+     * block claimed `session.composer.top`, which is the one slot whose contract
+     * this plugin had never exercised, and if it throws then the sidebar never
+     * registers, the panel never appears, and `/ock` vanishes from the slash
+     * list — because the keymap layer was registered *after* it. A view taking
+     * the commands down with it is the wrong way round.
+     *
+     * So each claim stands alone. A slot the host does not publish is a missing
+     * panel, not a missing command.
+     */
+    function claim(slot: Parameters<typeof ui.slot>[0]) {
+      try {
+        return ui.slot(slot)
+      } catch (error) {
+        console.error(`[kanban] slot ${String((slot as { append?: string; prepend?: string }).append ?? (slot as { prepend?: string }).prepend)} not claimed: ${error instanceof Error ? error.message : String(error)}`)
+        return () => {}
+      }
+    }
+
+    claim({
       prepend: "session.composer.top",
       render: (input) => {
         const theme = tones()
@@ -498,7 +546,7 @@ export default Plugin.define({
       },
     })
 
-    ui.slot({
+    claim({
       append: "sidebar.content",
       render: (input) => {
         ensureLoaded(input.sessionID)
@@ -508,7 +556,7 @@ export default Plugin.define({
 
     // The expanded view. `session.panel` renders only while a panel is open, so
     // `/kanban` opens it; the host owns layout, scrolling and full-screen.
-    ui.slot({
+    claim({
       append: "session.panel",
       render: (input) => {
         if (input.name !== PANEL) return <box />
@@ -705,9 +753,17 @@ export default Plugin.define({
        * keystroke away from the safe one.
        */
       "kanban.import": async (sessionID, input) => {
-        const words = (input ?? "").trim().split(/\s+/).filter(Boolean)
-        const replace = words.includes("replace")
-        const path = words.find((word) => word !== "replace")
+        // The whole remainder is the path, not the first word of it.
+        //
+        // Splitting on whitespace made `/ock import ~/my tasks/tasks.md`
+        // import `~/my`, silently. Paths contain spaces constantly and nobody
+        // should have to quote one into a slash command, so an optional leading
+        // `replace` is stripped and whatever remains is the path. Quotes are
+        // still honoured if you use them.
+        let rest = (input ?? "").trim()
+        const replace = /^replace\b/i.test(rest)
+        if (replace) rest = rest.replace(/^replace\b/i, "").trim()
+        const path = rest.replace(/^["']/, "").replace(/["']$/, "").trim() || undefined
         if (!path && replace) {
           const ok = await ui.dialog.confirm({
             title: "Replace the board",
@@ -715,7 +771,9 @@ export default Plugin.define({
           })
           if (!ok) return
         }
-        await mutate(sessionID, { op: "import", ...(path ? { path } : {}), merge: !replace })
+        // `fromHuman` is what lets a person name a path outside the project. The agent's
+        // own tool call never sets it, so it stays confined however it is argued.
+        await mutate(sessionID, { op: "import", ...(path ? { path } : {}), merge: !replace, fromHuman: true })
       },
       /**
        * `/ock notify panel` or `/ock notify toast`; bare `/ock notify` asks.
@@ -931,28 +989,6 @@ export default Plugin.define({
       "kanban.continue": (sessionID) => mutate(sessionID, { op: "resume" }, "Nudging resumed"),
       "kanban.stop": (sessionID) => mutate(sessionID, { op: "pause" }, "Nudging paused"),
     }
-
-    ctx.keymap.layer(() => ({
-      commands: COMMANDS.map((spec) => ({
-        id: spec.name,
-        title: spec.title,
-        description: spec.hint,
-        group: spec.category,
-        palette: true as const,
-        slash: { name: DEFAULT_ROOT, aliases: ROOT_ALIASES, arguments: true as const },
-        run: (input) => {
-          void (async () => {
-            const id = sessionIDOf(ui.panel.current()?.sessionID ?? currentSession())
-            debug(
-              await io.read(id).catch(() => undefined),
-              "command",
-              `/${DEFAULT_ROOT}${input ? ` ${input}` : ""} -> ${spec.name}`,
-            )
-            await handlers[spec.name]?.(id, input)
-          })()
-        },
-      })),
-    }))
 
     function currentSession(): string {
       const route = ui.router.current() as { params?: Record<string, unknown> }

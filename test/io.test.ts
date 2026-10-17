@@ -15,11 +15,21 @@ import { describe, it } from "node:test"
 import { mkdtemp, readFile, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { apply, confinePath, type Store } from "../src/actions.ts"
-import { projectFiles, resolveInside } from "../src/files.ts"
+import { apply, confinePath, looksAbsolute, type Store } from "../src/actions.ts"
+import type { Files } from "../src/actions.ts"
+import { expandHome, projectFiles, resolveInside } from "../src/files.ts"
 import { renderTasks, TEMPLATE } from "../src/markdown.ts"
 import { treeRows } from "../src/board.ts"
 import { freshBoard } from "../src/types.ts"
+import { splitArgs } from "../src/addargs.ts"
+
+/** The import handler's own argument rule, mirrored so it can be tested. */
+function parseImport(input: string): { path: string | undefined; replace: boolean } {
+  let rest = input.trim()
+  const replace = /^replace\b/i.test(rest)
+  if (replace) rest = rest.replace(/^replace\b/i, "").trim()
+  return { path: rest.replace(/^["']/, "").replace(/["']$/, "").trim() || undefined, replace }
+}
 
 const NOW = 1_700_000_000_000
 
@@ -32,7 +42,8 @@ async function workspace() {
     write: async (board) => void saved.set(board.sessionID, board),
     files: projectFiles(root),
   }
-  return { root, store, sessionID: "ses_io" }
+  const files: Files = projectFiles(root)
+  return { root, store, sessionID: "ses_io", files }
 }
 
 describe("export", () => {
@@ -188,5 +199,72 @@ describe("a store without file access says so plainly", () => {
   it("export refuses rather than pretending", async () => {
     const bare: Store = { read: async (id) => freshBoard(id), write: async () => {} }
     await assert.rejects(apply(bare, "s", { op: "export" }, NOW), /needs file access/)
+  })
+})
+describe("a human naming a path the agent may not", () => {
+  // `/ock import ~/other-repo/tasks.md` is a person saying which file they mean.
+  // The same string from the agent's tool call is refused. Writing outside the
+  // project stays refused for both — that is the direction with consequences.
+  it("reads an absolute path when a human asked for it", async () => {
+    const { root, store, sessionID, files } = await workspace()
+    await files.write("elsewhere.md", "- [ ] from elsewhere")  // written relatively, then named absolutely below
+    const filesHuman = projectFiles(root, { allowAbsoluteRead: true })
+    const humanStore: Store = { ...store, files: filesHuman }
+    const { message } = await apply(humanStore, sessionID, {
+      op: "import",
+      path: path.join(root, "elsewhere.md"),
+      fromHuman: true,
+    }, NOW)
+    assert.match(message, /imported 1 task/)
+    assert.equal((await store.read(sessionID)).items[0]?.title, "from elsewhere")
+  })
+
+  it("refuses the same path when the agent asked for it", async () => {
+    const { root, store, sessionID, files } = await workspace()
+    await files.write("elsewhere.md", "- [ ] should not land")
+    await assert.rejects(
+      apply(store, sessionID, { op: "import", path: path.join(root, "elsewhere.md") }, NOW),
+      /must be relative to the project root/,
+    )
+    assert.equal((await store.read(sessionID)).items.length, 0, "and the board is untouched")
+  })
+
+  it("still refuses to WRITE outside the project, even for a human", async () => {
+    const { root } = await workspace()
+    await assert.rejects(projectFiles(root, { allowAbsoluteRead: true }).write("/tmp/escape.md", "x"), /must be relative/)
+    void root
+  })
+
+  it("recognises a Windows path on a Linux host instead of walking past it", () => {
+    // `path.isAbsolute("C:\\Users\\me\\tasks.md")` is false here, and a backslash
+    // is an ordinary filename character — so without this the traversal check
+    // treats it as relative and the path is never examined.
+    assert.equal(looksAbsolute("C:\\Users\\me\\tasks.md"), true)
+    assert.equal(looksAbsolute("\\\\server\\share\\tasks.md"), true, "a UNC path")
+    assert.equal(looksAbsolute("/etc/passwd"), true)
+    assert.equal(looksAbsolute("~/tasks.md"), true)
+    assert.equal(looksAbsolute(".ai/tasks.md"), false)
+    assert.equal(looksAbsolute("a/../b.md"), false)
+  })
+
+  it("expands ~ to the home directory", () => {
+    assert.equal(expandHome("~/tasks.md", "/home/someone"), path.join("/home/someone", "tasks.md"))
+    assert.equal(expandHome("~", "/home/someone"), "/home/someone")
+    assert.equal(expandHome(".ai/tasks.md", "/home/someone"), ".ai/tasks.md", "an ordinary path is untouched")
+  })
+
+  it("keeps a path with spaces intact, quoted or not", () => {
+    // The whole remainder after an optional `replace` is the path. Splitting on
+    // whitespace silently imported `~/my` out of `~/my tasks/tasks.md`.
+    assert.deepEqual(parseImport("replace ~/my tasks/tasks.md"), { path: "~/my tasks/tasks.md", replace: true })
+    assert.deepEqual(parseImport('"~/my tasks.md"'), { path: "~/my tasks.md", replace: false })
+    assert.deepEqual(parseImport("   "), { path: undefined, replace: false })
+    assert.deepEqual(parseImport("replace"), { path: undefined, replace: true })
+  })
+
+  it("splits quoted arguments for the other verbs that take words", () => {
+    assert.deepEqual(splitArgs('"~/my tasks.md" k2'), ["~/my tasks.md", "k2"])
+    assert.deepEqual(splitArgs("k5 k6 0"), ["k5", "k6", "0"])
+    assert.deepEqual(splitArgs("  "), [])
   })
 })
