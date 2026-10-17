@@ -27,6 +27,14 @@ export type Item = {
    */
   detail?: string
   status: ItemStatus
+  /**
+   * The containing folder, if any. Absent means top level.
+   *
+   * A parent is a container, not a unit of work: it has no status of its own
+   * and completes when every descendant does. That is what makes "Port the
+   * compiler" a heading rather than a task you can never tick.
+   */
+  parentID?: string
   createdAt: number
   updatedAt: number
 }
@@ -44,6 +52,17 @@ export type NudgeState = {
   halted: boolean
   /** Set by the human. Never cleared by the agent. */
   paused: boolean
+  /**
+   * Master switch for the restart policy. Optional so an absent value means
+   * "on" — a board written before this field existed keeps nudging rather than
+   * silently going quiet.
+   */
+  enabled?: boolean
+  /**
+   * How many nudges before halting. Optional for the same reason: absent means
+   * the default, which keeps old boards working.
+   */
+  maxAttempts?: number
   lastNudgeAt?: number
   /** Why we last decided, in words. Shown in the panel; asserted in tests. */
   lastResult?: string
@@ -64,6 +83,19 @@ export type Board = {
    * races a half-typed message. Not part of the work list, and safe to lose.
    */
   composerBusy?: boolean
+  /**
+   * Debug logging on/off. Optional so a board written before this field
+   * existed stays quiet rather than logging forever.
+   */
+  debug?: boolean
+  /**
+   * Where changes are announced: a toast, or a coloured block in the window.
+   *
+   * A board field rather than a plugin option, because options are read once at
+   * load and someone switching this off mid-session wants it to stick without
+   * editing a config file. Optional so an older board falls back to the option.
+   */
+  notify?: "toast" | "panel"
 }
 
 /** An empty nudge state — the starting point for every board. */

@@ -44,7 +44,7 @@ async function load(options?: AnyRecord): Promise<Harness> {
 
   const context = {
     location: { directory: worktree },
-    options: options ?? {},
+    options: { idleConfirmMs: 0, ...options },
     tool: {
       transform: async (fn: (editor: AnyRecord) => void) => {
         fn({
@@ -122,21 +122,62 @@ async function nudgeState(worktree: string, sessionID = "ses_test") {
 }
 
 describe("tool registration", () => {
-  it("registers exactly the two board tools, with JSON Schema input", async () => {
+  it("registers the two board tools plus the catalogue, with JSON Schema input", async () => {
     const { tools } = await load()
-    assert.deepEqual(Object.keys(tools).sort(), ["kanban_read", "kanban_write"])
+    // Three, not two: the third is documentation. A new session that cannot
+    // find out what `moveMany` is for will simply never call it, and the tool
+    // exists to stop that. The count is asserted so adding a fourth is a
+    // deliberate act rather than an accident.
+    assert.deepEqual(Object.keys(tools).sort(), ["kanban_help", "kanban_read", "kanban_write"])
     for (const definition of Object.values(tools)) {
       assert.ok(definition.description.length > 20, "a model needs a real description")
       assert.equal(typeof definition.execute, "function")
       assert.equal(definition.input.type, "object")
     }
     assert.deepEqual(Object.keys(tools.kanban_write.input.properties).sort(), [
+      "content",
       "detail",
+      "enabled",
       "id",
+      "ids",
+      "items",
+      "maxAttempts",
+      "merge",
+      "mode",
       "op",
+      "parentID",
+      "path",
       "status",
       "title",
       "to",
+    ])
+    // The op enum and the human-facing description must agree, or a model
+    // discovers half the surface only by trial and error.
+    assert.deepEqual(tools.kanban_write.input.properties.op.enum, [
+      "add",
+      "addMany",
+      "removeMany",
+      "moveMany",
+      "updateMany",
+      "update",
+      "remove",
+      "move",
+      "folder",
+      "subtask",
+      "subtasks",
+      "reparent",
+      "current",
+      "clear",
+      "pause",
+      "resume",
+      "unpause",
+      "nudge",
+      "count",
+      "debug",
+      "export",
+      "import",
+      "template",
+      "notify",
     ])
   })
 
@@ -153,7 +194,7 @@ describe("kanban_read", () => {
     const { tools } = await load()
     const result = await tools.kanban_read.execute({}, context())
     assert.match(result.content, /Board is empty/)
-    assert.match(result.content, /nudging: idle/)
+    assert.match(result.content, /nudge: no nudges yet/)
   })
 
   it("reports items the agent wrote, with detail", async () => {
@@ -198,7 +239,7 @@ describe("kanban_write", () => {
     await tools.kanban_write.execute({ op: "add", title: "a" }, context())
     await tools.kanban_write.execute({ op: "update", id: "k1", status: "done" }, context())
     const result = await tools.kanban_read.execute({}, context())
-    assert.match(result.content, /nudging: idle/)
+    assert.match(result.content, /nudge: no nudges yet/)
     assert.match(result.content, /1\/1 done/)
   })
 })
@@ -219,7 +260,7 @@ describe("the idle nudge", () => {
     await emit(idle())
     await finish()
     assert.equal(synthetic.length, 1)
-    assert.equal(synthetic[0].text, "kanban task k1")
+    assert.match(synthetic[0].text, /^kanban k1 \| try 1\/3 \| \d+ open \| 2 tries left$/)
     assert.equal(synthetic[0].sessionID, "ses_test")
     assert.equal(synthetic[0].resume, true, "a nudge must restart the agent loop")
   })

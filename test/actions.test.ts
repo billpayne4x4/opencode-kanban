@@ -6,6 +6,7 @@ import path from "node:path"
 import { apply, parseMutation, type Mutation, type Store } from "../src/actions.ts"
 import { renderBoard, nudgeToast, statusGlyph, truncate, progressLabel, checkbox, panelTitle, panelRule, EMPTY_BOARD } from "../src/format.ts"
 import * as store from "../src/store.ts"
+import { addItem } from "../src/board.ts"
 import { type Board, freshBoard } from "../src/types.ts"
 
 const NOW = 1_700_000_000_000
@@ -192,12 +193,12 @@ describe("format", () => {
     assert.equal(panelTitle(3, 3), "OpenCode Kanban (3/3)")
   })
 
-  it("the rule is as wide as the heading", () => {
-    const title = panelTitle(2, 5)
-    const rule = panelRule(title)
-    assert.equal([...rule].length, [...title].length)
-    assert.equal(rule, "─".repeat(title.length))
-    assert.equal(panelRule(""), "─", "never zero-width, which would hide the row")
+  it("the rule spans the given width", () => {
+    assert.equal([...panelRule(40)].length, 40)
+    assert.equal([...panelRule(panelTitle(2, 5).length)].length, panelTitle(2, 5).length)
+    assert.equal(panelRule(0), "─", "never zero-width, which would hide the row")
+    assert.equal(panelRule(-5), "─", "a bad measurement must not throw")
+    assert.equal(panelRule(12.9), "─".repeat(12), "fractions truncate to whole cells")
   })
 
   it("only a done item gets a ticked box", () => {
@@ -207,8 +208,9 @@ describe("format", () => {
     assert.equal(checkbox("blocked"), "[ ]")
   })
 
-  it("the empty board still says something useful", () => {
-    assert.match(EMPTY_BOARD, /kanban-add/)
+  it("the empty-board string is for dialogs, not the panel", () => {
+    assert.match(EMPTY_BOARD, /no tasks/i)
+    assert.doesNotMatch(EMPTY_BOARD, /kanban-add/, "the panel must not point at commands")
   })
 
   it("renderBoard says something useful when empty", () => {
@@ -223,6 +225,26 @@ describe("format", () => {
     const text = renderBoard(board)
     assert.match(text, /▸ k1 · Fix \(current\)/)
     assert.match(text, /detail: passes tests/)
+  })
+
+  it("renderBoard indents the tree so nesting is visible", () => {
+    // Regression: rows came out in creation order, so a parent and its child
+    // drew side by side and the board read as a flat list.
+    let board = addItem(freshBoard("ses_1"), { title: "Phase 1" }, 0).board
+    board = addItem(board, { title: "Lowering", parentID: "k1" }, 0).board
+    board = addItem(board, { title: "Audit eval.rs", parentID: "k2" }, 0).board
+    board = addItem(board, { title: "Unrelated" }, 0).board
+    const rows = renderBoard(board).split("\n").filter((line) => /^[ ·✓▸!\[]/.test(line) && /\bk\d/.test(line))
+    assert.deepEqual(
+      rows.map((line) => line.replace(/^(\s*)\[[ x]\]\s*/, "$1").replace(/^(\s*)[·✓▸!]\s*/, "$1").trim()),
+      ["k1 · Phase 1", "k2 · Lowering", "k3 · Audit eval.rs", "k4 · Unrelated"],
+    )
+    // Indent per level, and a checkbox on containers: "pending" is not a state
+    // a container can be in, since it has no work of its own.
+    assert.match(rows[0]!, /^\[ \] k1 /, "a root container sits at the left margin")
+    assert.match(rows[1]!, /^ {2}\[ \] k2 /, "a child container is one step in")
+    assert.match(rows[2]!, /^ {4}· k3 /, "a grandchild task is two steps in")
+    assert.match(rows[3]!, /^· k4 /, "a later root is back at the margin, not under the tree")
   })
 
   it("nudgeToast warns before the last try", () => {

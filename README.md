@@ -29,45 +29,81 @@ So the plugin takes the cheap, recoverable action a **bounded number of times**,
 then assumes the human meant it and says so out loud. Being wrong costs three
 short prompts. Not stopping costs ignoring a stop button forever.
 
-> **Three nudges. Then it halts, tells you, and waits for `/kanban-continue`.**
+> **Three nudges. Then it halts, tells you, and waits for `/ock continue`.**
 
 ---
 
 ## 📸 The panel
 
-The board lives in a right-hand pane that the host promotes to full screen on a
-narrow terminal. Scroll and focus belong to the host, so it behaves like the rest
-of the UI.
-
 ```text
-OpenCode Kanban (2/5)
-────────────────────
-▸ [x] Remove the band-aid folds
-  [ ] Add the IR-invariance gate
-  [ ] Relocate the policy folds
-  [ ] Prove the general replacement
-⟳ nudge 1/3
+OpenCode Kanban (3/9)
+─────────────────────
+▸ [ ] Wire export / import to both surfaces   1/9
+    ✓ [x] MUTATION_SCHEMA + op enum
+    ▸ [x] REQUIRED_OPS + OP_COMMANDS
+      · [ ] catalog.ts entries
+    · [ ] /ock export, import, template handlers
+· [ ] README for all of it
+─────────────────────
+running   ·   nudge on   ·   2/3 tries
 ```
 
-| Element | Meaning |
-|---|---|
-| `(2/5)` | done / total. An empty board reads `(0/0)` — it never disappears |
-| `[x]` / `[ ]` | finished / not finished. Only two states, so the column reads as a column |
-| `▸` | the item a nudge would point at |
-| `⟳ nudge 1/3` | the restart counter, always visible so a nudge is never a surprise |
-| `halted 3/3` | it gave up on restarting the agent, and is waiting for you |
+**Indentation is the tree.** One step per level, depth-first, so a four-level
+board reads as four levels instead of a flat list. Nesting has no depth limit.
+
+**Folders carry a checkbox**, and `[x]` only when every leaf beneath them is done
+— recursively. `▾` is gone; a container is not a disclosure triangle, it is a
+branch that either is or isn't finished.
+
+**Colour means one thing.** Green is the task you are on, and it is the only row
+coloured for being current. Amber is blocked — the one status that shouts
+unasked. Finished work greys out. Everything else is white, folders included.
+An earlier version also tinted the folder holding the active task and every
+folder above it: three coloured rows for the single fact "you are here", which
+made a nested board look busy rather than informative.
+
+**Red is reserved for a halt.** When the nudges run out, the status and the count
+both turn red. A board you stopped yourself is a normal state and reads as one —
+colour it red and you learn to ignore the colour.
+
+Every colour is a `ctx.theme` token, so the panel follows whatever theme is
+active. There is not a single hex or `rgb()` in the panel, and a test fails if
+one appears.
 
 ---
 
 ## 🧠 What the AI has access to
 
-Exactly two tools. No hidden surface, no ambient access, no filesystem or shell
-reach — the board is the whole contract.
+Three tools, no hidden surface, no ambient access, no filesystem or shell reach —
+the board is the whole contract.
 
 ### `kanban_read`
 
 Read-only. Returns every item with its status and `detail`, which item is
-current, progress counters, and the nudge state.
+current, progress counters, and the nudge state. Depth-first, one indent per
+level, so nesting is visible rather than a flat list.
+
+### `kanban_help`
+
+The whole capability catalogue: every operation, **what it is for**, its
+arguments, and a copyable example — plus the loop, the folder rules, and what the
+nudge counter actually means.
+
+This exists because of a real failure. The author knew how to drive the board
+because they'd just written it. A new session knows nothing, sees two tool names,
+and either guesses what twenty-two `op` values do or quietly uses the handful it
+recognises. Knowledge that lives in one agent's head isn't a feature.
+
+It is not a hand-written document. `src/catalog.ts` holds the catalogue as data
+and **three** things read it:
+
+- the `kanban_write` tool schema — so the op list a model sees cannot fall behind
+  what is implemented;
+- `kanban_help` — the full reference;
+- `/ock help` — the same content, grouped for a human.
+
+`test/catalog.test.ts` asserts the catalogue covers `REQUIRED_OPS` in both
+directions, so adding an op without documenting it fails the suite.
 
 ### `kanban_write`
 
@@ -76,14 +112,32 @@ One mutation per call:
 | Op | Fields | Does |
 |---|---|---|
 | `add` | `title`, `detail?`, `status?` | Append an item. `detail` is where acceptance criteria live |
+| `addMany` | `items[]` | Append up to 500 as one validated batch |
+| `folder` | `title`, `detail?` | A container that closes when its subtasks close |
+| `subtask` | `parentID`, `title`, `detail?` | One task filed under a folder |
+| `subtasks` | `parentID`, `items[]` | Many tasks under one folder |
+| `reparent` | `id`, `parentID` | Re-file, or lift to top level with `""` |
 | `update` | `id`, `title?`/`detail?`/`status?` | Patch an item |
+| `updateMany` | `ids[]`, `…?` | The same patch on many |
 | `remove` | `id` | Delete an item |
+| `removeMany` | `ids[]` | Delete many |
 | `move` | `id`, `to` | Reorder by index |
+| `moveMany` | `ids[]`, `to` | Move a batch, order preserved |
 | `current` | `id?` | Point a nudge at an item; omit to clear |
 | `clear` | — | Empty the board |
-| `pause` | — | Stop nudging; never cleared by the agent |
-| `resume` | — | Resume nudging and reset the counter |
-| `unpause` | — | Resume but keep the counter |
+| `pause` | — | Stop nudging |
+| `resume` / `unpause` | — | Resume, resetting the counter |
+| `nudge` | `enabled` | Restart policy on/off — **the human's** |
+| `count` | `maxAttempts` | Tries before halting — **the human's** |
+| `debug` | `enabled` | Activity log to `/tmp/opencode-kanban-debug.log` |
+| `export` | `path?` | Write `.ai/tasks.md` — an indented checklist |
+| `import` | `path?`/`content?`, `merge?` | Rebuild the board from a checklist |
+| `template` | `path?` | Write a starter, one task per level, three deep |
+| `notify` | `mode` | `"panel"` (block in the window) or `"toast"` |
+
+Nesting has **no depth limit** — a folder can hold a folder. A folder is a
+container, not a unit of work: marking one done by hand is refused, and it closes
+itself once every descendant closes.
 
 **Every one of those ops is also a slash command.** A capability you can only get
 by asking a model to do it for you is not really a capability — and there is a
@@ -91,9 +145,57 @@ test that fails if the two surfaces ever drift apart.
 
 ### What the AI cannot do
 
-It cannot write the board file directly, cannot clear the board without the op,
-cannot lift a `pause` you set (a human message never does that), and cannot
-change the attempt budget. Those are all `ctx.options` and human-only commands.
+It cannot write the board file directly, cannot lift a `pause` you set (a human
+message never does that), and — deliberately — should not reach for `nudge`,
+`count` or `debug` to escape a stall. Getting stuck is information, and the
+person reading the board is the one who acts on it. Those are `ctx.options` and
+human-only commands.
+
+---
+
+## 💾 Backup, restore, and a template
+
+The board lives in `.opencode/kanban.json` — a plugin's private scratch space.
+It is invisible in a diff, absent from a backup, and destroyed by anything that
+cleans unknown directories. Someone who spent an hour with an agent decomposing a
+project into forty tasks owns that work in exactly one place, and it is a place
+they cannot easily see.
+
+So the board gets a form a person can read, commit, and hand over.
+
+```text
+/ock export           ->  .ai/tasks.md
+/ock import           ->  reads it back
+/ock template         ->  .ai/tasks.template.md
+```
+
+`.ai/tasks.md` is an indented checklist — depth-first, `[ ]`/`[x]` per line:
+
+```markdown
+- [ ] Phase 1: compiler
+  - [ ] Inventory the band-aids
+    - [x] Remove the cross-assembly ctor path
+- [-] Working on it now
+- [!] Blocked on a decision
+```
+
+`/ock import` reads it back into the tree. **`/ock import replace`** swaps the
+board out entirely — behind a confirmation, and never one keystroke from the safe
+call, because it is the only operation that can lose what is already there.
+
+Hand-written files work too: indentation *is* the nesting, so a list typed by a
+person imports exactly like one this plugin wrote. `[ ]` `[x]` `[-]` `[!]` are
+read as pending, done, in progress and blocked; anything unrecognised is read as
+pending rather than failing the file, because the file is meant to be edited by
+hand.
+
+Any path must stay inside the project. An absolute path, or one that climbs out
+with `../`, is refused — the agent picks these paths, and an agent can be talked
+into `../../.ssh/authorized_keys` by anything it reads.
+
+`/ock template` writes a starter showing **one task per level, three deep**,
+which is the thing nobody can guess: whether nesting is allowed at all, and how
+far.
 
 ---
 
@@ -150,7 +252,7 @@ Requirements: **OpenCode 2.x**, Node 22.18+. The peer dependencies
 **Adding work yourself**
 
 ```text
-/kanban-add
+/ock add "a thing"
 ```
 
 The agent picks the board up on its next read. You do not need to tell it.
@@ -187,19 +289,37 @@ fresh budget of three.
 
 ## ⌨️ Slash commands
 
-| Command | Does |
-|---|---|
-| `/kanban` | Open the panel |
-| `/kanban-add` | Type a task into a dialog |
-| `/kanban-edit` | Fix an item's text |
-| `/kanban-done` | Mark an item done — also resets the counter |
-| `/kanban-remove` | Delete an item |
-| `/kanban-move` | Reorder: pick an item, then up / down / top / bottom |
-| `/kanban-current` | Set the item a nudge points at |
-| `/kanban-clear` | Delete everything, behind a confirmation |
-| `/kanban-control` | Stop menu: resume / un-pause / pause / mark-all-done / clear |
-| `/kanban-continue` | Lift a halt and reset the counter |
-| `/kanban-stop` | Stop nudging entirely until you resume it |
+One registered command, `/ock`, with a verb after it. Bare verbs like `/add` or
+`/done` are the first thing any task plugin wants to claim, and on a public repo
+somebody eventually will — one prefix cannot be taken by accident.
+`/kanban` and `/ockanban` are registered as fallbacks.
+
+```text
+/ock help              the whole catalogue, grouped — same source as kanban_help
+/ock                   open the panel, and list the verbs
+/ock add "a thing"     add a task
+/ock add k3 "a thing"  file it under folder k3
+/ock done k5           mark done, and reset the try counter
+/ock rm k1 k2 k3       remove several at once
+/ock edit k5 "text"    rename
+/ock current k5        point the marker, and any nudge, here
+/ock folder "Phase 2"  add a container
+/ock reparent k7 k3    re-file a task
+/ock add-many          paste a list, one per line
+/ock update-many       paste ids, then a status
+/ock run | pause       resume or stop the board
+/ock budget            how many tries before it halts
+/ock control           the stop menu: resume / pause / budget / debug / clear
+/ock clear             empty the board, behind a confirmation
+/ock export            write .ai/tasks.md — a checklist you can read and commit
+/ock import            read a checklist back; `replace` swaps the board out
+/ock template          write a starter showing one task per level, three deep
+/ock notify panel      changes are announced in a block in the window
+/ock notify toast      …or as the host's own notification
+```
+
+Omit the ids and you get a picker instead. Verbs also accept the joined spelling
+(`/ock addmany`) and the hyphenated one (`/ock nudge-on`), whichever you type.
 
 ---
 
@@ -208,7 +328,12 @@ fresh budget of three.
 ```jsonc
 {
   "plugins": [
-    { "package": "/path/to/opencode-kanban", "options": { "maxAttempts": 5 } }
+    { "package": "/path/to/opencode-kanban", "options": {
+        "maxAttempts": 5,     // nudges before halting (default 3)
+        "nudge": true,        // false keeps the tools and panel but never restarts
+        "notify": "panel",    // "panel" = a coloured block in the window
+                              // "toast" = the host's own notification
+    } }
   ]
 }
 ```
@@ -309,16 +434,16 @@ The warning names the plugin but not the mistake. Use the discovery symlink.
 ### It nudges when you did not want it to
 
 ```text
-/kanban-stop
+/ock stop
 ```
 
-Permanent until `/kanban-continue`. To keep the panel but never be restarted at
+Permanent until `/ock continue`. To keep the panel but never be restarted at
 all, set `nudge: false` in the options.
 
 ### It halted and you disagree
 
 ```text
-/kanban-continue
+/ock continue
 ```
 
 Lifts the halt and resets the counter. If it halts again immediately, the board
@@ -343,7 +468,7 @@ current board is fresh. The quarantined file is still yours if you want it.
 ## 🧪 Development
 
 ```sh
-npm test          # 99 tests, no host required
+npm test          # 229 tests, no host required
 npm run typecheck
 ```
 
@@ -352,6 +477,13 @@ Tests run on plain Node with type stripping.
 The interesting part is `src/nudge.ts`, which is **pure**: same board in, same
 decision out, no I/O. That is why the state machine is testable without a host,
 and it is where the real branching lives.
+
+`src/catalog.ts` is the other one worth knowing about. It holds every operation
+as data — summary, purpose, arguments, example, caveats — and generates the
+`kanban_write` schema, `kanban_help`, and `/ock help` from it. A reference
+handed to a model has to be impossible to drift from the thing it describes, or
+it is worse than no reference: the model trusts it, acts on it, and fails in a way
+nobody can explain.
 
 `src/tui.tsx` cannot be imported by `node --test` (no JSX transform without a
 bundler), so the things worth asserting about the UI — the command manifest, and
@@ -369,7 +501,12 @@ src/actions.ts    every mutation, one write path
 src/store.ts      atomic JSON persistence
 src/format.ts     presentation
 src/commands.ts   the command manifest, as data
-src/index.ts      v2 server: kanban_read / kanban_write + the idle hook
+src/catalog.ts    every operation, documented; drives the schema + both helps
+src/markdown.ts   the board as a checklist, and back  (pure)
+src/files.ts      project-root reads/writes, confined to the root
+src/addargs.ts    /ock add <parent> "text" parsing
+src/debug.ts      the activity log, and its env override for tests
+src/index.ts      v2 server: kanban_read / kanban_write / kanban_help + the idle hook
 src/tui.tsx       v2 TUI: the panel, dialogs, and keymap
 index.ts          root entry, for plugin discovery
 tui.ts            root TUI entry, for plugin discovery

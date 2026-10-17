@@ -21,7 +21,7 @@
     "./tui": "./tui.ts"
   },
   "scripts": {
-    "test": "node --test --experimental-strip-types \"test/*.test.ts\"",
+    "test": "KANBAN_DEBUG_LOG=/tmp/opencode/kanban-test-debug.log node --test --experimental-strip-types \"test/*.test.ts\"",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit"
   },
@@ -38,6 +38,7 @@
   "devDependencies": {
     "@opencode-ai/plugin": "^1.18.7",
     "@opencode/plugin": "^2.0.32",
+    "@opencode/theme": "^2.0.32",
     "@opentui/core": "^0.5.6",
     "@opentui/solid": "^0.5.6",
     "@types/node": "^24.19.2",
