@@ -4,7 +4,8 @@ import { mkdtemp, readFile, readdir, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { apply, parseMutation, type Mutation, type Store } from "../src/actions.ts"
-import { renderBoard, nudgeToast, statusGlyph, truncate, progressLabel, checkbox, panelTitle, panelRule, EMPTY_BOARD } from "../src/format.ts"
+import { boardStatus } from "../src/nudge.ts"
+import { renderBoard, statusCells, nudgeToast, statusGlyph, truncate, progressLabel, checkbox, panelTitle, panelRule, EMPTY_BOARD } from "../src/format.ts"
 import * as store from "../src/store.ts"
 import { addItem } from "../src/board.ts"
 import { type Board, freshBoard } from "../src/types.ts"
@@ -245,6 +246,40 @@ describe("format", () => {
     assert.match(rows[1]!, /^ {2}\[ \] k2 /, "a child container is one step in")
     assert.match(rows[2]!, /^ {4}· k3 /, "a grandchild task is two steps in")
     assert.match(rows[3]!, /^· k4 /, "a later root is back at the margin, not under the tree")
+  })
+
+  it("clearing the board also clears the halt and the counter", async () => {
+    // A board you have just wiped used to keep showing a red `stopped 3/3` — the
+    // plugin reporting it had given up on work that no longer existed.
+    let board = freshBoard("ses_1")
+    board = addItem(board, { title: "a" }, NOW).board
+    board = { ...board, debug: true, nudge: { ...board.nudge, maxAttempts: 3, attempts: 3, halted: true } }
+    const store = memoryStore(board)
+
+    await apply(store, "ses_1", { op: "clear" }, NOW)
+    const cleared = store.board
+    assert.equal(cleared.items.length, 0)
+    assert.equal(cleared.nudge.halted, false, "no halt on an empty board")
+    assert.equal(cleared.nudge.attempts, 0, "and no tally")
+    assert.equal(cleared.nudge.paused, false)
+    assert.equal(boardStatus(cleared), "idle", "an empty board reads idle")
+    assert.equal(cleared.nudge.maxAttempts, 3, "the budget is a setting and survives")
+    assert.equal(cleared.debug, true, "so does debug logging")
+  })
+
+  it("a cleared board renders a normal idle row, not a red halt", async () => {
+    // The whole point of the fix, checked through the thing a person reads.
+    let board = freshBoard("ses_1")
+    board = addItem(board, { title: "a" }, NOW).board
+    board = { ...board, nudge: { ...board.nudge, attempts: 3, halted: true } }
+    const store = memoryStore(board)
+    await apply(store, "ses_1", { op: "clear" }, NOW)
+
+    const cells = statusCells(store.board)
+    const alerts = cells.filter((cell) => cell.kind === "text" && cell.tone === "alert")
+    assert.deepEqual(alerts, [], "nothing red survives a clear")
+    assert.ok(cells.some((cell) => cell.kind === "text" && cell.value === "idle"))
+    assert.ok(cells.some((cell) => cell.kind === "text" && cell.value === "3 tries"))
   })
 
   it("nudgeToast warns before the last try", () => {

@@ -577,7 +577,14 @@ export async function apply(store: Store, sessionID: string, mutation: Mutation,
       break
     case "clear": {
       const removed = board.items.length
-      next = clearBoard(board, now)
+      // Clearing is a fresh start, and that includes the nudge state.
+      //
+      // It used to empty the items and leave the counter alone, so a board you
+      // had just wiped still showed a red `stopped 3/3` — the plugin reporting
+      // that it had given up on work that no longer existed. The budget and the
+      // on/off switch are settings and survive; the tally and the halt are
+      // about the work, and the work is gone.
+      next = nudgeOp(clearBoard(board, now), resume(board.nudge))
       message = `cleared ${removed} item(s)`
       break
     }
