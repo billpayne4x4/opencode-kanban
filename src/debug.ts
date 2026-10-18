@@ -38,13 +38,34 @@ export type DebugCategory = "tool" | "event" | "nudge" | "command" | "state" | "
  */
 export function debug(board: { debug?: boolean } | undefined, category: DebugCategory, message: string): boolean {
   if (!debugOn(board)) return false
-  const line = `${new Date().toISOString()} [${category}] ${message.replace(/\s+/g, " ").trim()}\n`
+  write(who(board), category, message)
+  return true
+}
+
+/**
+ * Which window a line came from.
+ *
+ * Two projects run this plugin at once, and they share one log file. Without a
+ * tag on every line there is no way to tell which window was nudged, which
+ * halted, and which stayed quiet — so a single ambiguous line reads as a
+ * mystery when it is really two unrelated sessions interleaved.
+ *
+ * Short on purpose: project name plus the session's last four characters is
+ * enough to match a line against a window title, and long enough not to wrap.
+ */
+function who(board: { debug?: boolean; project?: string; sessionID?: string } | undefined): string {
+  const project = board?.project ?? "?"
+  const session = board?.sessionID ? board.sessionID.slice(-4) : "????"
+  return `${project}#${session}`
+}
+
+function write(tag: string, category: DebugCategory, message: string): void {
+  const line = `${new Date().toISOString()} ${tag} [${category}] ${message.replace(/\s+/g, " ").trim()}\n`
   try {
     appendFileSync(DEBUG_LOG, line)
   } catch {
     // A full disk or a read-only /tmp must not break the thing being debugged.
   }
-  return true
 }
 
 /**

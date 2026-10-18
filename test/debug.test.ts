@@ -37,12 +37,26 @@ describe("the debug log", () => {
     assert.equal(await read(), before)
   })
 
-  it("writes a timestamped, categorised line when on", async () => {
-    const board = { ...freshBoard("s"), debug: true }
+  it("writes a timestamped, categorised line, tagged with its window", async () => {
+    // Two projects run this plugin at once and share one log, so every line
+    // carries the project and the session tail. Without it, two unrelated
+    // windows are indistinguishable in the one file you open to find out what
+    // happened.
+    const board = { ...freshBoard("ses_abcdef123456"), debug: true, project: "RubyC" }
     assert.equal(debug(board, "nudge", "nudge 1/3 -> firing"), true)
     const text = await read()
     const line = text.trim().split("\n").pop() ?? ""
-    assert.match(line, /^\d{4}-\d{2}-\d{2}T[\d:.]+Z \[nudge\] nudge 1\/3 -> firing$/)
+    assert.match(line, /^\d{4}-\d{2}-\d{2}T[\d:.]+Z RubyC#3456 \[nudge\] nudge 1\/3 -> firing$/)
+  })
+
+  it("tags a line rather than losing the board's identity when it is absent", async () => {
+    // A board written before the field existed has no project. It should still
+    // log, with a visible placeholder — not go quiet and not print "undefined".
+    const board = { ...freshBoard("s"), debug: true }
+    debug(board, "nudge", "no project on this board")
+    const line = (await read()).trim().split("\n").pop() ?? ""
+    // The session tail is still there; only the missing project is a placeholder.
+    assert.match(line, /Z \?#s \[nudge\] no project on this board$/)
   })
 
   it("records every category it is given", async () => {

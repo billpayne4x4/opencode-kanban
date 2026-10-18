@@ -239,11 +239,17 @@ export function nudgeBudget(nudge: NudgeState | undefined, fallback = DEFAULT_MA
  * The stored field is `paused` and the displayed word is `stopped`, because
  * that is the word for "you halted this" rather than "the work is resting".
  */
-export function boardStatus(board: Board | undefined): "running" | "stopped" | "idle" {
+export function boardStatus(board: Board | undefined): "running" | "stopped" | "halted" | "idle" {
   if (!board) return "idle"
-  // A halt means the plugin gave up with work still open. Reporting "running"
-  // there is a lie — nothing is running, and the board is waiting on a human.
-  if (board.nudge?.halted || board.nudge?.paused) return "stopped"
+  // A halt and a pause are different situations that used to report the same
+  // word, so a board that had halted itself was indistinguishable from one the
+  // human had deliberately parked — and both read as "stopped", which says
+  // nothing about whether anything is recoverable.
+  //
+  // `halted` is the one that matters: the engine gave up while work was still
+  // open. `stopped` is a human decision. Now they say so.
+  if (board.nudge?.halted) return "halted"
+  if (board.nudge?.paused) return "stopped"
   return hasOpenWork(board) ? "running" : "idle"
 }
 

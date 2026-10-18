@@ -89,6 +89,14 @@ export type Board = {
    */
   debug?: boolean
   /**
+   * Which project this board belongs to — the working directory's name.
+   *
+   * Purely for the debug log. Two projects can run this plugin at once and they
+   * share one log file, so without this every line is ambiguous about which
+   * window did the thing. Optional and harmless to lose.
+   */
+  project?: string
+  /**
    * Where changes are announced: a toast, or a coloured block in the window.
    *
    * A board field rather than a plugin option, because options are read once at

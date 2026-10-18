@@ -114,6 +114,12 @@ function context(sessionID = "ses_test") {
 
 const idle = (sessionID = "ses_test") => ({ type: "session.idle", data: { sessionID } })
 const deleted = (sessionID = "ses_test") => ({ type: "session.deleted", data: { sessionID } })
+/** The end of one model step — mid-turn, between tool calls, not a stall. */
+const stepEnd = (sessionID = "ses_test") => ({ type: "session.step.ended", data: { sessionID } })
+const status = (type: "busy" | "idle" | "retry", sessionID = "ses_test") => ({
+  type: "session.status",
+  data: { sessionID, status: { type } },
+})
 
 /** Read the persisted nudge state straight off disk. */
 async function nudgeState(worktree: string, sessionID = "ses_test") {
@@ -274,6 +280,79 @@ describe("the idle nudge", () => {
     }
     assert.equal(synthetic.length, 3, "three tries, then assume the human meant stop")
     assert.equal((await nudgeState(worktree)).halted, true)
+  })
+
+  it("never nudges on a step ending — that fires mid-turn, not on a stall", async () => {
+    // The bug that stopped live work: `session.step.ended` fires after every
+    // model step, so a thinking burst produced three of them inside the old
+    // four-second debounce. Three attempts, halt, and the agent had barely
+    // started. Only a real end-of-turn counts.
+    const { tools, emit, finish, synthetic, worktree } = await load()
+    await tools.kanban_write.execute({ op: "add", title: "a" }, context())
+    for (let i = 0; i < 10; i += 1) {
+      await emit(stepEnd())
+      await finish()
+    }
+    assert.deepEqual(synthetic, [], "a step ending is not a stall")
+    assert.equal((await nudgeState(worktree)).attempts, 0, "and it must not spend the budget")
+  })
+
+  it("does not nudge a session the host reports as busy", async () => {
+    // v2 emits `session.status` with busy/idle/retry. Nothing read it before, so
+    // an idle event could arrive for a session that was plainly mid-turn.
+    const { tools, emit, finish, synthetic, worktree } = await load()
+    await tools.kanban_write.execute({ op: "add", title: "a" }, context())
+    await emit(status("busy"))
+    await finish()
+    for (let i = 0; i < 5; i += 1) {
+      await emit(idle())
+      await finish()
+    }
+    assert.deepEqual(synthetic, [], "busy outranks an idle event")
+    assert.equal((await nudgeState(worktree)).attempts, 0)
+  })
+
+  it("nudges again once the session reports it is no longer busy", async () => {
+    // Otherwise "busy" would latch forever and the overnight guarantee would
+    // quietly stop working — the guard must clear, not just block.
+    const { tools, emit, finish, synthetic } = await load()
+    await tools.kanban_write.execute({ op: "add", title: "a" }, context())
+    await emit(status("busy"))
+    await finish()
+    await emit(idle())
+    await finish()
+    await emit(status("idle"))
+    await finish()
+    await emit(idle())
+    await finish()
+    assert.equal(synthetic.length, 1, "one nudge once the session is genuinely idle")
+  })
+
+  it("treats retry as busy — a failing turn is still a turn", async () => {
+    const { tools, emit, finish, synthetic } = await load()
+    await tools.kanban_write.execute({ op: "add", title: "a" }, context())
+    await emit(status("retry"))
+    await finish()
+    await emit(idle())
+    await finish()
+    assert.deepEqual(synthetic, [], "a retrying agent is working, not stalled")
+  })
+
+  it("keeps two sessions in one window independent", async () => {
+    // Two windows, one plugin, one event stream. One going busy, or spending its
+    // budget, must not touch the other — that is what let a stall in one project
+    // look like a stall in both.
+    const { tools, emit, finish, synthetic } = await load()
+    const other = "ses_other"
+    await tools.kanban_write.execute({ op: "add", title: "a" }, context())
+    await tools.kanban_write.execute({ op: "add", title: "b" }, context(other))
+
+    await emit(status("busy", "ses_test"))
+    await emit(idle(other))
+    await finish()
+
+    assert.equal(synthetic.length, 1, "the busy session is skipped, the other is nudged")
+    assert.equal(synthetic[0].sessionID, other)
   })
 
   it("respects a pause", async () => {

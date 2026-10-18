@@ -67,11 +67,18 @@ function takeOverEventLoop(): AbortController {
 export const HUMAN_GRACE_MS = 5000
 
 /**
- * How recently the host must have stamped `session.time.idle` before a
- * `session.step.ended` counts as a real end-of-turn, and the window in which a
- * second trigger for the same idle is ignored.
+ * How long after a real end-of-turn before we treat it as a stall.
+ *
+ * This was 4000ms, which sounds like a safety margin and was the entire reason
+ * the nudge engine could fire mid-turn. A thinking burst produces three
+ * `session.step.ended` events inside about twelve seconds; each one cleared a
+ * four-second debounce, so three attempts were spent — and the halt set — while
+ * the agent was still working, roughly fifteen seconds after it started.
+ *
+ * A real pause is minutes, not seconds. Five minutes costs nothing when the
+ * agent is genuinely stalled and removes the whole class of interruption.
  */
-export const IDLE_CONFIRM_MS = 4000
+export const IDLE_CONFIRM_MS = 300_000
 
 type Options = {
   maxAttempts?: number
@@ -248,9 +255,14 @@ export default Plugin.define({
 
     debugAlways("state", `attached; log=${DEBUG_LOG}; maxAttempts=${options.maxAttempts}; nudge=${options.nudge}`)
 
+    // Stamped on every read and write so a debug line can name its window.
+    // Two projects run this plugin at once and share one log file; without this
+    // there is no way to tell which one was nudged.
+    const project = worktree.split("/").filter(Boolean).pop() ?? worktree
+
     const io: Store = {
-      read: (sessionID) => store.load(worktree, sessionID),
-      write: (board) => store.save(worktree, board),
+      read: async (sessionID) => ({ ...(await store.load(worktree, sessionID)), project }),
+      write: (board) => store.save(worktree, { ...board, project }),
       files: projectFiles(worktree),
     }
 
@@ -339,6 +351,16 @@ export default Plugin.define({
     /** When we last acted on an idle for a session, to collapse double triggers. */
     const lastIdleHandledAt = new Map<string, number>()
 
+    /**
+     * Sessions the host has reported as working, from `session.status`.
+     *
+     * Per session, like everything else here, so two windows running this
+     * plugin never steer each other: one going busy cannot suppress the other's
+     * nudge, and one halting cannot stop the other. Both windows subscribe to
+     * the same event stream, and every decision below is keyed by `sessionID`.
+     */
+    const busySessions = new Set<string>()
+
     await ctx.session.hook("prompt", async (event) => {
       lastHumanMessageAt.set(event.sessionID, Date.now())
       debug(await io.read(event.sessionID).catch(() => undefined), "event", "human message -> grace window opens")
@@ -373,26 +395,50 @@ export default Plugin.define({
 
           if (!options.nudge) continue
 
-          const isIdle = event.type === "session.idle"
-          const isStepEnd = event.type === "session.step.ended"
-          if (!isIdle && !isStepEnd) continue
+          // `session.status` is the only event that says whether the session is
+          // actually working. v2 emits `{ type: "busy" | "idle" | "retry" }`, and
+          // we were not reading it at all — so nothing between the host and the
+          // synthetic message knew the agent was mid-turn.
+          if (event.type === "session.status") {
+            const status = (event.data as { status?: { type?: string } } | undefined)?.status?.type
+            if (status === "busy" || status === "retry") busySessions.add(event.data.sessionID)
+            else busySessions.delete(event.data.sessionID)
+            continue
+          }
+
+          // Only a real end-of-turn counts. `session.step.ended` fires after
+          // every model step — mid-turn, between tool calls, while the agent is
+          // thinking — and counting it as idle is what let the engine halt live
+          // work. `session.idle` is the honest signal; the host does emit it.
+          if (event.type !== "session.idle") continue
 
           // v2 event payloads live on `data`; v1 used `properties`.
           const sessionID = event.data.sessionID
 
-          // `session.idle` is not emitted on every host path, so
-          // `session.step.ended` is the trigger that actually fires. This used
-          // to re-confirm it against `session.time.idle`, and that gate could
-          // never pass: the host stamps that field once and never advances it,
-          // so `Date.now() - idleAt` only ever grows. It therefore suppressed
-          // every step-ended nudge and logged a "skipping nudge" line each time
-          // — a check that looked load-bearing and did nothing but look
-          // load-bearing. The debounce below is what actually collapses the two
-          // triggers landing for one idle.
-          // Both triggers can land for the same idle, so never handle one twice.
+          // Collapse repeated idles for one stall. The host can emit more than
+          // one, and the debounce is what stops each from spending an attempt.
+          //
+          // (`session.time.idle` was once re-checked here and could never pass:
+          // the host stamps that field once and never advances it, so the age
+          // only grew. It suppressed every nudge while looking load-bearing.
+          // `session.status` is the signal that does advance, and it is read
+          // above.)
           const lastHandled = lastIdleHandledAt.get(sessionID) ?? 0
           if (options.idleConfirmMs > 0 && Date.now() - lastHandled < options.idleConfirmMs) continue
           lastIdleHandledAt.set(sessionID, Date.now())
+
+          // Never nudge a session the host says is working. Checked after the
+          // debounce stamps below, so a busy session still consumes the slot —
+          // that is deliberate: it stops a backlog of busy events from firing a
+          // burst the instant the session goes idle.
+          if (busySessions.has(sessionID)) {
+            debug(
+              await io.read(sessionID).catch(() => undefined),
+              "event",
+              "idle event but session is busy -> not nudging",
+            )
+            continue
+          }
 
           const spoke = lastHumanMessageAt.get(sessionID)
           if (spoke !== undefined && Date.now() - spoke < HUMAN_GRACE_MS) {

@@ -268,16 +268,16 @@ describe("the status line, as labels separated by dots", () => {
     assert.equal(tones(spent).get("3/3 tries"), "alert")
   })
 
-  it("reads stopped, in red, with the count that explains it", () => {
+  it("reads halted, in red, with the count that explains it", () => {
     const base = boardWith("a")
     const halted = { ...base, nudge: { ...base.nudge, attempts: 3, halted: true } }
-    assert.equal(tones(halted).get("stopped"), "alert", "the status word turns red")
+    assert.equal(tones(halted).get("halted"), "alert", "the status word turns red")
     assert.equal(tones(halted).get("3/3 tries"), "alert", "and so does the count — it is the explanation")
   })
 
-  it("a halted board is stopped, not running", () => {
+  it("a halted board says halted, never running", () => {
     const halted = { ...boardWith("a"), nudge: { attempts: 3, halted: true, paused: false } }
-    assert.equal(boardStatus(halted), "stopped", "reporting running while halted is a lie")
+    assert.equal(boardStatus(halted), "halted", "reporting running while halted is a lie")
     assert.equal(isHalted(halted), true)
     assert.equal(isHalted(boardWith("a")), false)
   })
@@ -292,7 +292,7 @@ describe("the status line, as labels separated by dots", () => {
   it("uses the plural correctly", () => {
     const base = boardWith("a")
     const one = { ...base, nudge: { ...base.nudge, maxAttempts: 1, attempts: 1, halted: true } }
-    assert.ok(tones(one).has("stopped"))
+    assert.ok(tones(one).has("halted"))
     const two = { ...base, nudge: { ...base.nudge, maxAttempts: 2, attempts: 1 } }
     assert.ok(tones(two).has("1/2 tries"))
   })
@@ -339,12 +339,14 @@ describe("board status", () => {
     assert.equal(isStopped(boardWith("a")), false)
   })
 
-  it("a halt is not a stop — they are cleared by different commands", () => {
+  it("a halt says halted, not stopped — the human can tell them apart", () => {
     const halted = { ...boardWith("a"), nudge: { ...freshBoard("s").nudge, attempts: 3, halted: true } }
-    // A halt is a stop the plugin chose itself: still "stopped", but an
-    // error, because the agent ignored the nudges.
-    assert.equal(boardStatus(halted), "stopped")
-    assert.equal(isStopped(halted), true)
+    // These used to report the same word, so a board that had halted itself was
+    // indistinguishable from one the human had deliberately parked — and
+    // "stopped" says nothing about whether anything is recoverable.
+    assert.equal(boardStatus(halted), "halted")
+    // Still distinct states underneath, and still cleared by different commands.
+    assert.equal(isStopped(halted), false, "a halt is not a human stop")
     assert.equal(isHalted(halted), true)
   })
 })

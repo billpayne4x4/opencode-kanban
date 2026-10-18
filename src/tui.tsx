@@ -111,9 +111,12 @@ export default Plugin.define({
     const ui = ctx.ui
     const worktree = ctx.location?.directory ?? process.cwd()
 
+    // Stamped on every read and write so a debug line can name its window.
+    const project = worktree.split("/").filter(Boolean).pop() ?? worktree
+
     const io: Store = {
-      read: (sessionID) => load(worktree, sessionID),
-      write: (board) => save(worktree, board),
+      read: async (sessionID) => ({ ...(await load(worktree, sessionID)), project }),
+      write: (board) => save(worktree, { ...board, project }),
       // The human-facing side may read a file they name explicitly. The server's
       // handle (index.ts) deliberately does not, so the agent's tool call stays
       // confined to the project however it is argued.
