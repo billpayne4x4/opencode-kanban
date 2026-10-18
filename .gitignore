@@ -1,3 +1,9 @@
 node_modules/
 *.log
 .opencode/
+# Agent instruction files — personal tooling, not part of the package.
+.ai/
+AGENTS.md
+CLAUDE.md
+.cursorrules
+.github/copilot-instructions.md

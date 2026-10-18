@@ -77,6 +77,23 @@ one appears.
 Three tools, no hidden surface, no ambient access, no filesystem or shell reach —
 the board is the whole contract.
 
+### The skill
+
+The plugin also registers an **autoinvoking skill**, so a model is told the board
+exists without having to go looking for it.
+
+This came from watching it not happen. An agent was asked to track its work, and
+hand-wrote a task list into a scratch file — while a purpose-built board sat in
+the same session, unused. Nothing had gone wrong. The agent simply never knew
+there was anything else, because the whole surface was three tool descriptions and
+a `kanban_help` that only helps if you already suspect it.
+
+That failure is silent, which is what makes it worth paying for. An agent
+tracking work in the wrong place looks exactly like an agent that is working.
+
+Set `autoinvoke: false` in `src/skill.ts` if you would rather list the skill than
+inline its contents every turn.
+
 ### `kanban_read`
 
 Read-only. Returns every item with its status and `detail`, which item is

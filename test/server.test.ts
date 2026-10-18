@@ -25,6 +25,7 @@ type Harness = {
   cleanup: () => Promise<void> | void
   worktree: string
   sentinels: unknown[]
+  skills: Record<string, AnyRecord>
 }
 
 async function load(options?: AnyRecord): Promise<Harness> {
@@ -39,12 +40,28 @@ async function load(options?: AnyRecord): Promise<Harness> {
   const waiting: ((value: IteratorResult<unknown>) => void)[] = []
 
   let tools: Record<string, AnyRecord> = {}
+  const skills: Record<string, AnyRecord> = {}
   let promptHook: ((event: AnyRecord) => Promise<void>) | undefined
   let cleanup: (() => Promise<void> | void) | undefined
 
   const context = {
     location: { directory: worktree },
     options: { idleConfirmMs: 0, ...options },
+    skill: {
+      transform: async (fn: (editor: AnyRecord) => void) => {
+        fn({
+          add: (skill: AnyRecord) => {
+            skills[skill.id] = skill
+          },
+          list: () => [],
+          get: () => undefined,
+          update: () => {},
+          remove: () => {},
+        })
+      },
+      list: async () => ({ data: [] }),
+      reload: async () => {},
+    },
     tool: {
       transform: async (fn: (editor: AnyRecord) => void) => {
         fn({
@@ -95,6 +112,7 @@ async function load(options?: AnyRecord): Promise<Harness> {
     synthetic,
     sentinels,
     worktree,
+    skills,
     get promptHook() {
       return promptHook
     },
@@ -126,6 +144,55 @@ async function nudgeState(worktree: string, sessionID = "ses_test") {
   const raw = JSON.parse(await readFile(path.join(worktree, ".opencode", "kanban.json"), "utf8"))
   return raw.boards[sessionID]?.nudge
 }
+
+describe("telling the model the board exists", () => {
+  it("registers an autoinvoking skill, so nobody has to go looking", async () => {
+    // The failure this prevents is silent: an agent that never learns the board
+    // exists tracks its work in a scratch file, which looks exactly like an
+    // agent that is simply working.
+    const { skills } = await load()
+    const skill = skills["kanban-board"]
+    assert.ok(skill, "the skill must be registered")
+    assert.equal(skill.autoinvoke, true, "listed-but-not-inlined would leave it undiscovered")
+    assert.equal(skill.name, "kanban-board")
+    assert.ok(String(skill.description).length > 10, "and it needs a description to be picked")
+  })
+
+  it("says the thing a tool signature cannot: read first, and done resets the counter", async () => {
+    const { skills } = await load()
+    const content = String(skills["kanban-board"].content)
+    assert.match(content, /kanban_read/, "it must name the read tool")
+    assert.match(content, /START of every turn/, "and say when to call it")
+    assert.match(content, /RESETS the nudge counter/, "the counter rule is not guessable")
+    assert.match(content, /scratch\s+file/, "and it must warn off reimplementing the board")
+  })
+
+  it("keeps the tools and the panel working when the host has no skills", async () => {
+    // A host without embedded skills should still get everything else, so the
+    // registration is best-effort rather than load-bearing.
+    const plugin = (await import("../src/index.ts")).default as AnyRecord
+    const worktree = await mkdtemp(path.join(tmpdir(), "kanban-noskill-"))
+    const context: AnyRecord = {
+      location: { directory: worktree },
+      options: { idleConfirmMs: 0 },
+      tool: {
+        transform: async (fn: (editor: AnyRecord) => void) => {
+          fn({ add: () => {}, list: () => [], get: () => undefined, namespace: () => {}, update: () => {}, remove: () => {} })
+        },
+      },
+      session: { hook: async () => ({ dispose: async () => {} }), synthetic: async () => ({}) },
+      event: {
+        subscribe: () => ({
+          [Symbol.asyncIterator]: () => ({ next: () => new Promise(() => {}) }),
+        }),
+      },
+      ui: {},
+    }
+    // No `skill` on the context at all — the shape an older host presents.
+    const definition = plugin as AnyRecord
+    await definition.setup(context)
+  })
+})
 
 describe("tool registration", () => {
   it("registers the two board tools plus the catalogue, with JSON Schema input", async () => {

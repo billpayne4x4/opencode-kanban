@@ -27,6 +27,7 @@ import { type Mutation, type Store, apply, parseMutation } from "./actions.ts"
 import { DEFAULT_MAX_ATTEMPTS, boardStatus, decideNudge, maxAttemptsFor, nudgeLabel, nudgeText, openWork } from "./nudge.ts"
 import * as store from "./store.ts"
 import { projectFiles } from "./files.ts"
+import { SKILL_CONTENT, SKILL_DESCRIPTION, SKILL_ID, SKILL_NAME } from "./skill.ts"
 import { DEBUG_LOG, debug, debugAlways } from "./debug.ts"
 
 const PLUGIN_ID = "opencode-kanban"
@@ -268,6 +269,36 @@ export default Plugin.define({
 
     function log(message: string) {
       console.error(`[${PLUGIN_ID}] ${message}`)
+    }
+
+    /**
+     * Tell the model the board exists, unprompted.
+     *
+     * Everything else this plugin offers a model is a tool description and a
+     * `kanban_help` it has to think to call. Without this, an agent that had not
+     * gone looking never found the board — and the failure is silent, because an
+     * agent tracking work in a scratch file looks exactly like an agent working.
+     *
+     * Best-effort: a host without embedded skills should still get the tools and
+     * the panel, so a throw here must not take the plugin down.
+     */
+    try {
+      await ctx.skill.transform((editor) => {
+        editor.add({
+          id: SKILL_ID as never,
+          name: SKILL_NAME as never,
+          description: SKILL_DESCRIPTION,
+          autoinvoke: true,
+          // An embedded skill has no file behind it. The path is where one would
+          // live if it did, and keeps the id resolvable for the session picker.
+          path: `${worktree}/.opencode/skills/${SKILL_ID}.md` as never,
+          content: SKILL_CONTENT,
+        })
+      })
+      debugAlways("state", `registered autoinvoking skill ${SKILL_ID}`)
+    } catch (error) {
+      // Not fatal. The tools, the panel and the nudge all work without it.
+      log(`could not register the ${SKILL_ID} skill: ${String(error)}`)
     }
 
     await ctx.tool.transform((editor) => {
